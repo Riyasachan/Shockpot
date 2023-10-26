@@ -1,0 +1,101 @@
+version: '3.1'
+
+services:
+  hpfeeds:
+    image: hpfeeds/hpfeeds-broker:latest
+    restart: always
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - backend
+      - frontend
+    ports:
+      - "20000:20000"
+      - "9431:9431"
+
+  shockpot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shockpot
+    restart: always
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - hpfeeds
+     
+
+  agent:
+    build:
+      context: .
+      dockerfile: ./agent/agent_dockerfile
+    container_name: honeypot_agent
+    restart: always
+    networks:
+      - elk
+    ports:
+      - '9090:9090'
+    depends_on:
+      - elasticsearch
+
+ 
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.7.0
+    networks:
+      - elk
+    depends_on:
+      - hpfeeds      
+      - shockpot
+    environment:
+      cluster.name: elk
+      network.host: 0.0.0.0
+      discovery.type: single-node
+      ES_JAVA_OPTS: "-Xms256m -Xmx256m"
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:7.7.0
+    command: ["--strict.perms=false", "-c", "/usr/share/filebeat/filebeat.yml"]
+    volumes:
+      - ./suricata/logs:/var/log/suricata:ro
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+    networks:
+      - elk
+    environment:
+      LS_JAVA_OPTS: "-Xms256m -Xmx256m"
+    restart: always
+    depends_on:
+     
+      - suricata
+
+
+
+  suricata:
+    image: jasonish/suricata:latest
+    command: -i hp_core
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+    volumes:
+      - ./suricata/logs:/var/log/suricata
+      - ./suricata/rules:/var/lib/suricata
+      - ./suricata/config:/etc/suricata
+    depends_on:
+      - elasticsearch
+
+
+networks:
+  frontend:
+    internal: false
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: hp_core
+  backend:
+    internal: true
+  elk:
